@@ -3,7 +3,8 @@ import fs from 'fs';
 import path from 'path';
 import type { MediaAssetRecord } from '../src/types/index.ts';
 
-const UPLOADS_DIR = path.join(process.cwd(), 'public', 'uploads');
+const IS_SERVERLESS = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const UPLOADS_DIR = IS_SERVERLESS ? '/tmp/pjl-uploads' : path.join(process.cwd(), 'public', 'uploads');
 
 function getCloudinaryFolder(): string {
   return (process.env.CLOUDINARY_FOLDER || 'prophet-john-lord-ministry').trim();

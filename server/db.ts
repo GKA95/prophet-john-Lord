@@ -34,12 +34,18 @@ interface AdminAuthDocument extends AdminAuthStore {
 }
 
 const ROOT_DIR = process.cwd();
-const DATA_DIR = path.join(ROOT_DIR, 'data');
+const IS_SERVERLESS = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const SEED_DATA_DIR = path.join(ROOT_DIR, 'data');
+const DATA_DIR = IS_SERVERLESS ? '/tmp/pjl-data' : SEED_DATA_DIR;
 const CMS_FILE = path.join(DATA_DIR, 'cms-content.json');
+const SEED_CMS_FILE = path.join(SEED_DATA_DIR, 'cms-content.json');
 const SUBMISSIONS_FILE = path.join(DATA_DIR, 'cms-submissions.json');
+const SEED_SUBMISSIONS_FILE = path.join(SEED_DATA_DIR, 'cms-submissions.json');
 const AUTH_FILE = path.join(DATA_DIR, 'admin-auth.json');
+const SEED_AUTH_FILE = path.join(SEED_DATA_DIR, 'admin-auth.json');
 const MEDIA_FILE = path.join(DATA_DIR, 'media-assets.json');
-const UPLOADS_DIR = path.join(ROOT_DIR, 'public', 'uploads');
+const SEED_MEDIA_FILE = path.join(SEED_DATA_DIR, 'media-assets.json');
+const UPLOADS_DIR = IS_SERVERLESS ? '/tmp/pjl-uploads' : path.join(ROOT_DIR, 'public', 'uploads');
 
 let mongoClient: MongoClient | null = null;
 let mongoDb: Db | null = null;
@@ -59,11 +65,15 @@ export function hashPassword(password: string, salt: string): string {
 }
 
 function ensureLocalDirectories() {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
-  if (!fs.existsSync(UPLOADS_DIR)) {
-    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (!fs.existsSync(UPLOADS_DIR)) {
+      fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+    }
+  } catch {
+    // Ignore directory creation failure on restricted filesystems
   }
 }
 
@@ -112,31 +122,49 @@ function mergeCMSWithDefaults(partial?: Partial<CMSPayload>): CMSPayload {
   };
 }
 
+function safeWriteJson(filePath: string, data: unknown): void {
+  ensureLocalDirectories();
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+  } catch {
+    // Avoid crashing on read-only serverless filesystems
+  }
+}
+
 function readLocalCMS(): CMSPayload {
   ensureLocalDirectories();
-  if (fs.existsSync(CMS_FILE)) {
+  const sourceFile = fs.existsSync(CMS_FILE)
+    ? CMS_FILE
+    : fs.existsSync(SEED_CMS_FILE)
+      ? SEED_CMS_FILE
+      : null;
+  if (sourceFile) {
     try {
-      const parsed = JSON.parse(fs.readFileSync(CMS_FILE, 'utf-8')) as Partial<CMSPayload>;
+      const parsed = JSON.parse(fs.readFileSync(sourceFile, 'utf-8')) as Partial<CMSPayload>;
       return mergeCMSWithDefaults(parsed);
     } catch {
       // fallback below
     }
   }
   const initial = mergeCMSWithDefaults();
-  fs.writeFileSync(CMS_FILE, JSON.stringify(initial, null, 2), 'utf-8');
+  safeWriteJson(CMS_FILE, initial);
   return initial;
 }
 
 function writeLocalCMS(payload: CMSPayload): void {
-  ensureLocalDirectories();
-  fs.writeFileSync(CMS_FILE, JSON.stringify(payload, null, 2), 'utf-8');
+  safeWriteJson(CMS_FILE, payload);
 }
 
 function readLocalAuth(): AdminAuthStore {
   ensureLocalDirectories();
-  if (fs.existsSync(AUTH_FILE)) {
+  const sourceFile = fs.existsSync(AUTH_FILE)
+    ? AUTH_FILE
+    : fs.existsSync(SEED_AUTH_FILE)
+      ? SEED_AUTH_FILE
+      : null;
+  if (sourceFile) {
     try {
-      const parsed = JSON.parse(fs.readFileSync(AUTH_FILE, 'utf-8')) as AdminAuthStore;
+      const parsed = JSON.parse(fs.readFileSync(sourceFile, 'utf-8')) as AdminAuthStore;
       if (parsed.email && parsed.salt && parsed.passwordHash && parsed.tokenSecret) {
         return parsed;
       }
@@ -159,20 +187,24 @@ function readLocalAuth(): AdminAuthStore {
     updatedAt: new Date().toISOString(),
   };
 
-  fs.writeFileSync(AUTH_FILE, JSON.stringify(store, null, 2), 'utf-8');
+  safeWriteJson(AUTH_FILE, store);
   return store;
 }
 
 function writeLocalAuth(store: AdminAuthStore): void {
-  ensureLocalDirectories();
-  fs.writeFileSync(AUTH_FILE, JSON.stringify(store, null, 2), 'utf-8');
+  safeWriteJson(AUTH_FILE, store);
 }
 
 function readLocalSubmissions(): CMSSubmissions {
   ensureLocalDirectories();
-  if (fs.existsSync(SUBMISSIONS_FILE)) {
+  const sourceFile = fs.existsSync(SUBMISSIONS_FILE)
+    ? SUBMISSIONS_FILE
+    : fs.existsSync(SEED_SUBMISSIONS_FILE)
+      ? SEED_SUBMISSIONS_FILE
+      : null;
+  if (sourceFile) {
     try {
-      const parsed = JSON.parse(fs.readFileSync(SUBMISSIONS_FILE, 'utf-8')) as Partial<CMSSubmissions>;
+      const parsed = JSON.parse(fs.readFileSync(sourceFile, 'utf-8')) as Partial<CMSSubmissions>;
       return {
         newsletterSubscribers: Array.isArray(parsed.newsletterSubscribers) ? parsed.newsletterSubscribers : [],
         contactSubmissions: Array.isArray(parsed.contactSubmissions) ? parsed.contactSubmissions : [],
@@ -187,20 +219,24 @@ function readLocalSubmissions(): CMSSubmissions {
     contactSubmissions: [],
     eventRegistrations: [],
   };
-  fs.writeFileSync(SUBMISSIONS_FILE, JSON.stringify(initial, null, 2), 'utf-8');
+  safeWriteJson(SUBMISSIONS_FILE, initial);
   return initial;
 }
 
 function writeLocalSubmissions(submissions: CMSSubmissions): void {
-  ensureLocalDirectories();
-  fs.writeFileSync(SUBMISSIONS_FILE, JSON.stringify(submissions, null, 2), 'utf-8');
+  safeWriteJson(SUBMISSIONS_FILE, submissions);
 }
 
 function readLocalMedia(): MediaAssetRecord[] {
   ensureLocalDirectories();
-  if (fs.existsSync(MEDIA_FILE)) {
+  const sourceFile = fs.existsSync(MEDIA_FILE)
+    ? MEDIA_FILE
+    : fs.existsSync(SEED_MEDIA_FILE)
+      ? SEED_MEDIA_FILE
+      : null;
+  if (sourceFile) {
     try {
-      const parsed = JSON.parse(fs.readFileSync(MEDIA_FILE, 'utf-8'));
+      const parsed = JSON.parse(fs.readFileSync(sourceFile, 'utf-8'));
       return Array.isArray(parsed) ? parsed : [];
     } catch {
       return [];
@@ -210,8 +246,7 @@ function readLocalMedia(): MediaAssetRecord[] {
 }
 
 function writeLocalMedia(items: MediaAssetRecord[]): void {
-  ensureLocalDirectories();
-  fs.writeFileSync(MEDIA_FILE, JSON.stringify(items, null, 2), 'utf-8');
+  safeWriteJson(MEDIA_FILE, items);
 }
 
 function safeDecodeAndEncodeComponent(value: string): string {
